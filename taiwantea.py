@@ -1,39 +1,39 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sun Oct 19 12:52:50 2014
+Created on Thu Oct 30 18:34:55 2014
 
 @author: andreas
 """
 
-from bs4 import BeautifulSoup as Soup
-import urllib2
-import ast
-from matplotlib.cbook import flatten
+import getinfo as gi
+import teadatabase as tea
+import numpy as np
 
-"""
-url = 'http://www.taiwanteacrafts.com/shop/product-category/tea/'
-page = urllib2.urlopen(url)
-soup = Soup(page)
-urls = [link.get('href') for link in soup.find_all('a')]
-newurls = []
-for i,link in enumerate(urls):
-    if 'http://www.taiwanteacrafts.com/product/' in link:
-        lst = link.split('/')
-        link = '{}//{}/{}/{}/'.format(lst[0],lst[2],lst[3],lst[4])
-        newurls.append(link)
-newurls = list(set(newurls))
-for url in newurls:
-    print url
-"""
 class TeaError(Exception):
     pass
-    
-class TaiwanTeaDB(object):
-    
-    def __init__(self, url = 'http://www.taiwanteacrafts.com/shop/product-category/tea/'):
+
+class TaiwanTea(object):
+    def __init__(self, url = 'http://www.taiwanteacrafts.com/shop/product-category/tea/', database = 'teadatabase.sqlite'):
+        self.db = tea.TeaDatabase(database)
+        self.gettea = gi.TaiwanTeaDB(url)
         self.url = url
+        self.teapages = []
+        self.teaurls = []
+        self.baseurls = []
     
-    def get_tea_pages(self, verbose = False):
+    @staticmethod
+    def list_to_string(lst):
+        s = str(lst)
+        s.replace("'", ""); s.replace('"',''); s.replace("[",""); s.replace("]","")
+        return s
+        
+    @staticmethod
+    def tuple_to_string(tpl):
+        s = str(tpl)
+        s.replace("'", ""); s.replace('"',''); s.replace("(",""); s.replace(")","")
+        return s
+    
+    def getTeaPages(self, verbose = False):
         pages = []
         self.baseurls = []
         for i in range(1, int(1e4)):
@@ -49,8 +49,8 @@ class TaiwanTeaDB(object):
                 break
         if verbose: print('\n')
         return pages
-    
-    def find_tea_urls(self, soup):
+        
+    def findTeaUrls(self, soup):
         teaurls = []
         urls = [link.get('href') for link in soup.find_all('a')]
         for link in urls:
@@ -60,14 +60,14 @@ class TaiwanTeaDB(object):
                 teaurls.append(newlink)
         return teaurls
     
-    def get_tea_info(self,teaurl, verbose = False):
+    def getTeaInfo(self, teaurl, verbose = False):
         try:
             page = urllib2.urlopen(teaurl)
         except:
             raise TeaError, "The url {} is not a working address".format(teaurl)
         soup = Soup(page)
-        name = soup.find_all('h1','product_title entry-title')[0]
-        descr = soup.find_all('div',itemprop="description")[0]
+        name = soup.find_all('h1', 'product_title entry-title')[0]
+        descr = soup.find_all('div', itemprop="description")[0]
         descr = descr.text
         name = name.string
         
@@ -82,11 +82,11 @@ class TaiwanTeaDB(object):
             teastyle = "Unknown"
         
         try:
-            prices = soup.find_all('form','variations_form cart')[0] #Tins doesn't have this
+            prices = soup.find_all('form', 'variations_form cart')[0] #Tins doesn't have this
         except: 
             return False
         prices = prices['data-product_variations']
-        prices = prices.replace('false','False'); prices = prices.replace('true','True')
+        prices = prices.replace('false', 'False'); prices = prices.replace('true', 'True')
         prices = ast.literal_eval(prices)
         newprice = dict()
         for i, dic in enumerate(prices):
@@ -145,33 +145,29 @@ class TaiwanTeaDB(object):
         'terroir':terroir, 'region':region, 'pickstyle':picking, 'cultivars':cultivars,
         'elevation':elevation},'url':teaurl}
     
-    def flatten_urls(self, newurls):
-        newurls  = list(set(list(flatten(newurls)))) #Turn it into one list, remove duplicates and turn it into a list again
-        return newurls
-    
-    def main(self, verbose = False):
-        basesouplist = self.get_tea_pages(verbose)
-        teaurlslist = []
-        for soup in basesouplist:
-            teaurlslist.append(self.find_tea_urls(soup))
-        teaurls = self.flatten_urls(teaurlslist)
-        teadb = dict()
-        for teaurl in teaurls:
-            specteadb = self.get_tea_info(teaurl, verbose)
-            if not specteadb == False:
-                teadb[specteadb['name']] = specteadb
-        if verbose: print('\n')
-        return teadb
-
-if __name__ == "__main__":
-    obj = TaiwanTeaDB()
-#    teaurl = 'http://www.taiwanteacrafts.com/product/1982-sun-moon-lake-aged-black-tea-lot-220/'
-#    lst = obj.get_tea_pages()
-#    for item in lst:
-#        print obj.find_tea_urls(item)
-    teadb = obj.main(True)
-    print teadb
-#    print obj.get_tea_info(teaurl)
+    def addTeaToDatabase(self, teadict):
+        teaname = teadict['name']
+        teanamesdb = self.db.listTeas()
+        timenow = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if not teaname in teanamesdb:
+            try:
+                priceid = db.putPrices(**teadict['prices'])
+                informationid = db.putInformation(**teadict['information'])
+                db.putTea(teaname, teadict['style'], teadict['url'], informationid, priceid)
+            except:
+                raise TeaError, "The tea weren't in the database but couldn't be added to it."
+            
+        elif teaname in teanamesdb:
+            teaentry = db.getTeaByName(teaname)
+            if len(teaentry) > 1:
+                raise TeaError, "More than one tea with the name {} exist in the database".format(teaname)
+            teaentry = teaentry[0]
+            priceid = teaentry[-2]
+            priceentry = db.getPrices(priceid)[0]
+            entryprices = [priceentry[i].split(',') for i in range(1,len(priceentry)-1)]
+            teaprices = [self.tuple_to_string(price) for price in teaentry['prices'].values()]
+            if not (np.sort(entryprices) == np.sort(teaprices)).all():
+                pass
             
             
-            
+        
